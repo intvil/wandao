@@ -6,15 +6,15 @@ import os
 import math
 import torch
 
-from draft.config import device, TOTAL_STEPS, POLICY_PATH
-from draft.models.policy import (
+from wandao.config import device, TOTAL_STEPS, POLICY_PATH
+from wandao.models.policy import (
     side_to_move,
     is_ban_step,
     is_pick_step,
     build_state,
     masked_categorical_sample,
 )
-from draft.data.encoding import build_feature_vector
+from wandao.data.encoding import build_feature_vector
 
 
 def train_self_play(
@@ -171,7 +171,7 @@ def load_policy(n_champs, path=POLICY_PATH):
             f"Checkpoint total_steps {ck_steps} does not match current {TOTAL_STEPS}"
         )
 
-    from draft.models.policy import (
+    from wandao.models.policy import (
         DraftPolicy,
     )  # Local import to avoid circular at module load
 

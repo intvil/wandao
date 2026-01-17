@@ -11,7 +11,7 @@ try:
 except ImportError:
     tqdm = None
 
-from draft.config import (
+from wandao.config import (
     OPENDOTA_HEROES_URL,
     OPENDOTA_MATCHES_URL,
     DATA_CACHE_DIR,
@@ -20,7 +20,7 @@ from draft.config import (
     OPENDOTA_API_KEY,
     LINEUP_PATH,
 )
-from draft.data.encoding import encode_df, encode_lineups
+from wandao.data.encoding import encode_df, encode_lineups
 
 
 def request_data(less_than_match_id=None, min_rank=80, api_key=None):

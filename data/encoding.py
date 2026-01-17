@@ -62,7 +62,7 @@ def encode_lineups(df, feature_names):
 
 
 def build_feature_vector(teamA, teamB, n_champs):
-    """Build feature vector for a single draft.
+    """Build feature vector for a single wandao.
 
     For each hero feature, value is +1 if in teamA, -1 if in teamB, else 0.
 

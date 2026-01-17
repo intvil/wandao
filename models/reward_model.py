@@ -23,7 +23,7 @@ try:
 except ImportError:
     joblib = None
 
-from draft.config import (
+from wandao.config import (
     BASE_DIR,
     DATA_PATH,
     REWARD_MODEL_JOBLIB,
@@ -31,8 +31,8 @@ from draft.config import (
     REWARD_MODEL_MLP,
     REWARD_MODEL_META,
 )
-from draft.data.data_fetch import construct_dataset, get_encoded_data
-from draft.data.encoding import encode_df
+from wandao.data.data_fetch import construct_dataset, get_encoded_data
+from wandao.data.encoding import encode_df
 
 
 class SimpleMLP(nn.Module):

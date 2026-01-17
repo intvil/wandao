@@ -15,20 +15,22 @@ cp .env.example .env
 # Edit .env and add your OpenDota API key
 
 # Show help (no action without flags)
-python3 -m draft.cli.run_draft
+python3 -m wandao.cli.run_draft
 
 # Fetch new data
-python3 -m draft.cli.run_draft --fetch-data
+python3 -m wandao.cli.run_draft --fetch-data
 
 # Train the XGBoost reward model (uses cached data)
-python3 -m draft.cli.run_draft --train-reward
+python3 -m wandao.cli.run_draft --train-reward
 
 # Train the policy
-python3 -m draft.cli.run_draft --train-policy
+python3 -m wandao.cli.run_draft --train-policy
 
 # Run a sample draft with saved models
-python3 -m draft.cli.run_draft --sample-draft --load-policy
+python3 -m wandao.cli.run_draft --sample-draft --load-policy
 ```
+
+Feature names are stored in `model_cache/feature_names.json` and will be fetched from OpenDota on first run (use `--refresh-features` to force refresh).
 
 ## Command Line Options
 
@@ -49,6 +51,7 @@ python3 -m draft.cli.run_draft --sample-draft --load-policy
 --cluster-components N   UMAP output dimensions for cluster model (default: 5)
 --cluster-model-path P   Path to load/save cluster model (default: models/cluster_model.pkl)
 --cluster-rebuild        Force refit of cluster model even if a saved one exists
+--refresh-features       Force refresh hero feature_names.json from OpenDota API
 --fit-clusters           Fit/save cluster model and exit (no training)
 ```
 
@@ -56,31 +59,31 @@ python3 -m draft.cli.run_draft --sample-draft --load-policy
 
 ```bash
 # Fetch and train only the XGBoost model
-python3 -m draft.cli.run_draft --fetch-data --train-reward
+python3 -m wandao.cli.run_draft --fetch-data --train-reward
 
 # Train XGBoost with more data
-python3 -m draft.cli.run_draft --fetch-data --train-reward --n-batches 200
+python3 -m wandao.cli.run_draft --fetch-data --train-reward --n-batches 200
 
 # Train policy with custom iterations
-python3 -m draft.cli.run_draft --train-policy --policy-iters 2000 --batch-episodes 64
+python3 -m wandao.cli.run_draft --train-policy --policy-iters 2000 --batch-episodes 64
 
 # Full pipeline from scratch
-python3 -m draft.cli.run_draft --fetch-data --train-reward --n-batches 200 --train-policy --policy-iters 2000
+python3 -m wandao.cli.run_draft --fetch-data --train-reward --n-batches 200 --train-policy --policy-iters 2000
 
 # Export per-side lineups for clustering
-python3 -m draft.cli.run_draft --encode-lineups
+python3 -m wandao.cli.run_draft --encode-lineups
 
 # Train policy with human-likeness shaping (UMAP+HDBSCAN)
-python3 -m draft.cli.run_draft --train-policy --use-cluster-reward --cluster-weight 0.5
+python3 -m wandao.cli.run_draft --train-policy --use-cluster-reward --cluster-weight 0.5
 
 # Fit and save cluster model without training (from main entry point)
-python3 -m draft.cli.run_draft --fit-clusters
+python3 -m wandao.cli.run_draft --fit-clusters
 ```
 
 ## Project Structure
 
 ```
-draft/
+wandao/
 ├── cli/                 # Entrypoints
 │   └── run_draft.py
 ├── config.py            # Configuration and paths

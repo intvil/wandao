@@ -4,19 +4,19 @@ Main entry point for training and running the draft agent.
 
 import argparse
 import os
-from draft.config import device, TOTAL_STEPS, DATA_PATH, CLUSTER_MODEL_PATH
-from draft.utils.utils import load_feature_names, fetch_hero_names, idx_to_hero_name
-from draft.models.reward_model import RewardModel
-from draft.models.policy import DraftPolicy
-from draft.training.training import (
+from wandao.config import device, TOTAL_STEPS, DATA_PATH, CLUSTER_MODEL_PATH
+from wandao.utils.utils import ensure_feature_names, fetch_hero_names, idx_to_hero_name
+from wandao.models.reward_model import RewardModel
+from wandao.models.policy import DraftPolicy
+from wandao.training.training import (
     train_self_play,
     greedy_draft,
     save_policy,
     load_policy,
 )
-from draft.data.data_fetch import construct_dataset, get_lineup_data
-from draft.data.encoding import encode_df
-from draft.models.cluster_model import (
+from wandao.data.data_fetch import construct_dataset, get_lineup_data
+from wandao.data.encoding import encode_df
+from wandao.models.cluster_model import (
     fit_cluster_model,
     load_cluster_model,
     save_cluster_model,
@@ -31,22 +31,22 @@ def main():
         epilog="""
 Examples:
   # Fetch new data
-  python3 -m draft.cli.run_draft --fetch-data
+  python3 -m wandao.cli.run_draft --fetch-data
   
   # Encode lineups (after fetch)
-  python3 -m draft.cli.run_draft --encode-lineups
+  python3 -m wandao.cli.run_draft --encode-lineups
   
   # Fit cluster model (after encoding)
-  python3 -m draft.cli.run_draft --fit-clusters
+  python3 -m wandao.cli.run_draft --fit-clusters
   
   # Train reward model (uses cached/previously fetched data)
-  python3 -m draft.cli.run_draft --train-reward
+  python3 -m wandao.cli.run_draft --train-reward
   
   # Train policy (requires reward model)
-  python3 -m draft.cli.run_draft --train-policy
+  python3 -m wandao.cli.run_draft --train-policy
   
   # Run a sample draft using saved models
-  python3 -m draft.cli.run_draft --sample-draft --load-policy
+  python3 -m wandao.cli.run_draft --sample-draft --load-policy
         """,
     )
 
@@ -104,6 +104,13 @@ Examples:
         help="Weight for negative distance to nearest human cluster center",
     )
 
+    # Feature names
+    parser.add_argument(
+        "--refresh-features",
+        action="store_true",
+        help="Force refresh hero feature_names.json from OpenDota API",
+    )
+
     # Reward model training
     parser.add_argument(
         "--reward-backend",
@@ -157,6 +164,8 @@ Examples:
     )
 
     args = parser.parse_args()
+    feature_names = ensure_feature_names(force_refresh=args.refresh_features)
+
     # If no action flags are provided, show help and exit
     if not any(
         [
@@ -166,6 +175,7 @@ Examples:
             args.sample_draft,
             args.encode_lineups,
             args.fit_clusters,
+            args.refresh_features,
         ]
     ):
         parser.print_help()
@@ -174,7 +184,6 @@ Examples:
     print("device:", device)
 
     # Load feature names (needed for all steps except a no-op help call)
-    feature_names = load_feature_names()
     N_CHAMPS = len(feature_names)
     print(f"Loaded {N_CHAMPS} features (heroes) from feature_names.json")
 

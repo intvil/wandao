@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from draft.config import device, TOTAL_STEPS
+from wandao.config import device, TOTAL_STEPS
 
 # Draft sequence: (side, action) where side 0=A, 1=B; action 'b' ban, 'p' pick
 _SEQ = [

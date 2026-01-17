@@ -6,7 +6,7 @@ import json
 import os
 import requests
 
-from draft.config import FEATURES_PATH, OPENDOTA_HEROES_URL
+from wandao.config import FEATURES_PATH, OPENDOTA_HEROES_URL, OPENDOTA_API_KEY
 
 
 def load_feature_names():
@@ -21,6 +21,37 @@ def load_feature_names():
     with open(FEATURES_PATH, "r") as f:
         feature_names = json.load(f)
 
+    return feature_names
+
+
+def fetch_feature_names(api_key=None):
+    """Fetch hero IDs from OpenDota API.
+
+    Returns:
+        List of hero IDs as strings (sorted ascending)
+    """
+    params = {}
+    key = api_key or OPENDOTA_API_KEY
+    if key:
+        params["api_key"] = key
+    resp = requests.get(OPENDOTA_HEROES_URL, params=params, timeout=10)
+    resp.raise_for_status()
+    heroes = resp.json()
+    hero_ids = sorted({int(h["id"]) for h in heroes if "id" in h})
+    if not hero_ids:
+        raise ValueError("OpenDota heroes response missing ids")
+    return [str(hid) for hid in hero_ids]
+
+
+def ensure_feature_names(force_refresh=False, api_key=None):
+    """Ensure feature_names.json exists; optionally refresh from OpenDota."""
+    if not force_refresh and os.path.exists(FEATURES_PATH):
+        return load_feature_names()
+    feature_names = fetch_feature_names(api_key=api_key)
+    os.makedirs(os.path.dirname(FEATURES_PATH), exist_ok=True)
+    with open(FEATURES_PATH, "w") as f:
+        json.dump(feature_names, f)
+    print(f"Saved feature names to {FEATURES_PATH} ({len(feature_names)} heroes)")
     return feature_names
 
 
