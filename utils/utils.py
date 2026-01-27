@@ -6,7 +6,12 @@ import json
 import os
 import requests
 
-from wandao.config import FEATURES_PATH, OPENDOTA_HEROES_URL, OPENDOTA_API_KEY
+from wandao.config import (
+    DATA_CACHE_DIR,
+    FEATURES_PATH,
+    OPENDOTA_HEROES_URL,
+    OPENDOTA_API_KEY,
+)
 
 
 def load_feature_names():
@@ -55,22 +60,62 @@ def ensure_feature_names(force_refresh=False, api_key=None):
     return feature_names
 
 
-def fetch_hero_names():
-    """Fetch hero metadata from OpenDota API.
+def _load_hero_names_cache(cache_path):
+    with open(cache_path, "r") as f:
+        raw = json.load(f)
+    if not isinstance(raw, dict):
+        raise ValueError("Hero names cache is not a dictionary")
+    return {int(hid): name for hid, name in raw.items() if name}
+
+
+def fetch_hero_names(force_refresh=False):
+    """Fetch hero metadata from OpenDota API (cached on disk).
 
     Returns:
         Dictionary mapping hero ID (int) to localized name (str)
     """
+    cache_path = os.path.join(DATA_CACHE_DIR, "hero_names.json")
+    cached = None
+    if not force_refresh and os.path.exists(cache_path):
+        try:
+            cached = _load_hero_names_cache(cache_path)
+            if cached:
+                return cached
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(f"Warning: failed to read hero names cache ({exc}); refetching.")
+
+    params = {}
     try:
-        resp = requests.get(OPENDOTA_HEROES_URL, timeout=10)
+        resp = requests.get(OPENDOTA_HEROES_URL, params=params, timeout=10)
         resp.raise_for_status()
         heroes = resp.json()
-        id_to_name = {
-            int(h["id"]): h.get("localized_name") or h.get("name") for h in heroes
-        }
-        return id_to_name
-    except Exception:
-        return {}
+    except requests.RequestException as exc:
+        if cached is not None:
+            print(
+                f"Warning: hero name fetch failed ({exc}); using cache at {cache_path}."
+            )
+            return cached
+        raise
+
+    id_to_name = {
+        int(h["id"]): h.get("localized_name") or h.get("name")
+        for h in heroes
+        if "id" in h
+    }
+    if not id_to_name:
+        if cached is not None:
+            print("Warning: hero name fetch returned no ids; using cached names.")
+            return cached
+        raise ValueError("OpenDota heroes response missing ids")
+
+    os.makedirs(DATA_CACHE_DIR, exist_ok=True)
+    try:
+        with open(cache_path, "w") as f:
+            json.dump({str(hid): name for hid, name in id_to_name.items()}, f)
+    except OSError as exc:
+        print(f"Warning: failed to write hero names cache ({exc}).")
+
+    return id_to_name
 
 
 def idx_to_hero_name(idx, feature_names, id_to_name):

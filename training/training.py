@@ -23,8 +23,6 @@ def train_self_play(
     n_champs,
     iters=1200,
     batch_episodes=32,
-    cluster_model=None,
-    cluster_weight=0.0,
 ):
     """Train policy via self-play with policy gradient.
 
@@ -34,8 +32,6 @@ def train_self_play(
         n_champs: Number of champions/heroes
         iters: Number of training iterations
         batch_episodes: Number of episodes per batch
-        cluster_model: Optional ClusterModel for human-likeness shaping
-        cluster_weight: Weight for cluster proximity reward (negative distance)
     """
     opt = torch.optim.Adam(policy.parameters(), lr=2e-4)
     baseline = 0.0
@@ -73,16 +69,11 @@ def train_self_play(
                 logps.append(logp)
                 signs.append(+1.0 if side == 0 else -1.0)
 
-            # Reward from XGBoost reward model
+            # Reward from FM reward model
             vec = build_feature_vector(teamA, teamB, n_champs)
             p = reward_model.predict_proba(vec)
             p_clamped = min(max(p, 1e-6), 1 - 1e-6)
             total_reward = math.log(p_clamped) - math.log1p(-p_clamped)  # log-odds
-
-            # Optional shaping toward human-like clusters (teamA only)
-            if cluster_model is not None and cluster_weight != 0.0:
-                dist = cluster_model.distance_from_team(teamA)
-                total_reward = total_reward + cluster_weight * (-dist)
 
             R = torch.tensor(total_reward, device=device, dtype=torch.float32)
 

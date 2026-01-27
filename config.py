@@ -22,12 +22,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Paths
 MODEL_CACHE_DIR = os.path.join(BASE_DIR, "model_cache")
 FEATURES_PATH = os.path.join(MODEL_CACHE_DIR, "feature_names.json")
-REWARD_MODEL_JOBLIB = os.path.join(MODEL_CACHE_DIR, "reward_model.joblib")
-REWARD_MODEL_TXT = os.path.join(MODEL_CACHE_DIR, "reward_model.txt")
-REWARD_MODEL_MLP = os.path.join(MODEL_CACHE_DIR, "reward_model_mlp.pt")
-REWARD_MODEL_META = os.path.join(MODEL_CACHE_DIR, "reward_model_meta.json")
 POLICY_PATH = os.path.join(MODEL_CACHE_DIR, "draft_policy.pt")
-CLUSTER_MODEL_PATH = os.path.join(MODEL_CACHE_DIR, "cluster_model.pkl")
+FM_MODEL_PATH = os.path.join(MODEL_CACHE_DIR, "fm_model.pt")
 
 # Data cache directory and files
 DATA_CACHE_DIR = os.path.join(BASE_DIR, "data_cache")
@@ -38,9 +34,40 @@ DATA_PATH = os.path.join(
     DATA_CACHE_DIR, "pub_matches_draft.fea"
 )  # Encoded feature data
 LINEUP_PATH = os.path.join(DATA_CACHE_DIR, "pub_lineups.fea")  # Per-side lineup data
+POSITION_PROBS_PATH = os.path.join(DATA_CACHE_DIR, "hero_position_probs.csv")
+POSITION_PROBS_NAMED_PATH = os.path.join(
+    DATA_CACHE_DIR, "hero_position_probs_named.csv"
+)
+FM_LINEAR_WEIGHTS_PATH = os.path.join(DATA_CACHE_DIR, "fm_linear_weights_named.csv")
 
 # Draft step count (derived from actual ban/pick sequence in policy.py)
 TOTAL_STEPS = 24
+
+# Data fetch defaults
+FETCH_BATCHES = 1000
+
+# EM training defaults
+EM_MAX_LINEUPS = 0
+EM_MAX_ITERATIONS = 200
+EM_CONVERGENCE_THRESHOLD = 1e-4
+EM_EARLY_STOP_PATIENCE = 5
+EM_EARLY_STOP_MIN_DELTA = 1e-4
+EM_NUM_WORKERS = 0
+EM_VALID_FRACTION = 0.1
+EM_SEED = 42
+
+# FM training defaults
+FM_LATENT_DIM = 8
+FM_BATCH_SIZE = 1024
+FM_EPOCHS = 10
+FM_LR = 1e-3
+FM_WEIGHT_DECAY = 1e-6
+FM_EARLY_STOP_PATIENCE = 3
+FM_EARLY_STOP_MIN_DELTA = 1e-4
+
+# Policy training defaults
+POLICY_ITERS = 2000
+POLICY_BATCH_EPISODES = 32
 
 # Device configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

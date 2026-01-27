@@ -15,6 +15,9 @@ __pycache__/
 data_cache/
 model_cache/
 
+# playground
+playground/
+
 # IDE
 .vscode/
 .idea/
@@ -25,3 +28,6 @@ model_cache/
 # OS
 .DS_Store
 Thumbs.db
+
+# Copilot notes
+FOR_COPILOT.md
