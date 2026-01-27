@@ -4,18 +4,35 @@ Inspect EM position probabilities and FM linear weights.
 """
 
 import os
+import sys
 
 import pandas as pd
 import torch
 
-from wandao.config import (
-    FM_MODEL_PATH,
-    POSITION_PROBS_PATH,
-    POSITION_PROBS_NAMED_PATH,
-    FM_LINEAR_WEIGHTS_PATH,
-)
-from wandao.models.factorization_machine import load_fm_data, ROLE_COLUMNS
-from wandao.utils.utils import fetch_hero_names
+try:
+    from wandao.config import (
+        FM_MODEL_PATH,
+        POSITION_PROBS_PATH,
+        POSITION_PROBS_NAMED_PATH,
+        FM_LINEAR_WEIGHTS_PATH,
+    )
+    from wandao.models.factorization_machine import load_fm_data, ROLE_COLUMNS
+    from wandao.utils.utils import fetch_hero_names
+except ImportError:
+    # Allow running as a script from repo root without installing the package
+    PKG_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    PROJECT_ROOT = os.path.abspath(os.path.join(PKG_ROOT, ".."))
+    for path in (PROJECT_ROOT,):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+    from wandao.config import (
+        FM_MODEL_PATH,
+        POSITION_PROBS_PATH,
+        POSITION_PROBS_NAMED_PATH,
+        FM_LINEAR_WEIGHTS_PATH,
+    )
+    from wandao.models.factorization_machine import load_fm_data, ROLE_COLUMNS
+    from wandao.utils.utils import fetch_hero_names
 
 
 def _load_hero_names():
