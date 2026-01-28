@@ -13,7 +13,12 @@ from wandao.config import (
     POLICY_ITERS,
     POLICY_BATCH_EPISODES,
 )
-from wandao.utils.utils import ensure_feature_names, fetch_hero_names, idx_to_hero_name
+from wandao.utils.utils import (
+    ensure_feature_names,
+    fetch_hero_names,
+    idx_to_hero_name,
+    resolve_position_role_mapping,
+)
 from wandao.models.reward_model import RewardModel
 from wandao.models.factorization_machine import (
     load_position_probs,
@@ -46,6 +51,7 @@ def _infer_team_positions(team_indices, feature_names, id_to_name, pos_df):
             "Position probabilities missing hero ids: "
             f"{len(missing)} (e.g., {preview})"
         )
+    position_to_role = resolve_position_role_mapping(pos_df, id_to_name=id_to_name)
     probs = pos_df.loc[hero_ids, ROLE_COLUMNS].to_numpy(dtype=float)
     best_perm = None
     best_log = -float("inf")
@@ -57,7 +63,7 @@ def _infer_team_positions(team_indices, feature_names, id_to_name, pos_df):
             best_log = logp
             best_perm = perm
     return [
-        f"{id_to_name.get(hid, str(hid))} ({ROLE_COLUMNS[pos_idx]})"
+        f"{id_to_name.get(hid, str(hid))} ({position_to_role[ROLE_COLUMNS[pos_idx]]})"
         for hid, pos_idx in zip(hero_ids, best_perm)
     ]
 

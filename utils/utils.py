@@ -11,6 +11,7 @@ from wandao.config import (
     FEATURES_PATH,
     OPENDOTA_HEROES_URL,
     OPENDOTA_API_KEY,
+    PIVOTAL_HERO_ROLES,
 )
 
 
@@ -116,6 +117,56 @@ def fetch_hero_names(force_refresh=False):
         print(f"Warning: failed to write hero names cache ({exc}).")
 
     return id_to_name
+
+
+def _normalize_hero_name(name: str) -> str:
+    return name.strip().lower()
+
+
+def resolve_position_role_mapping(pos_df, id_to_name=None, pivotal_hero_roles=None):
+    """Map position columns to role names based on pivotal heroes."""
+    from wandao.models.factorization_machine import ROLE_COLUMNS
+
+    missing = [c for c in ROLE_COLUMNS if c not in pos_df.columns]
+    if missing:
+        raise ValueError(f"Position probabilities missing columns: {missing}")
+
+    pivotal_hero_roles = pivotal_hero_roles or PIVOTAL_HERO_ROLES
+    id_to_name = id_to_name or fetch_hero_names()
+    name_to_id = {
+        _normalize_hero_name(name): int(hid) for hid, name in id_to_name.items()
+    }
+    role_to_position = {}
+    used_positions = set()
+    for hero_name, role in pivotal_hero_roles.items():
+        hero_id = name_to_id.get(_normalize_hero_name(hero_name))
+        if hero_id is None:
+            raise ValueError(f"Pivotal hero not found in hero names: {hero_name}")
+        if "Hero_ID" in pos_df.columns:
+            hero_rows = pos_df.loc[pos_df["Hero_ID"] == hero_id, ROLE_COLUMNS]
+        else:
+            hero_rows = (
+                pos_df.loc[[hero_id], ROLE_COLUMNS]
+                if hero_id in pos_df.index
+                else pos_df.iloc[0:0]
+            )
+        if hero_rows.empty:
+            raise ValueError(f"Pivotal hero missing in position probs: {hero_name}")
+        position = hero_rows.iloc[0].idxmax()
+        if position in used_positions:
+            raise ValueError(
+                f"Position {position} assigned to multiple pivotal heroes"
+            )
+        role_to_position[role] = position
+        used_positions.add(position)
+    remaining_positions = [c for c in ROLE_COLUMNS if c not in used_positions]
+    if len(remaining_positions) != 1:
+        raise ValueError(
+            "Expected exactly one remaining position for softsup, "
+            f"got {remaining_positions}"
+        )
+    role_to_position["softsup"] = remaining_positions[0]
+    return {pos: role for role, pos in role_to_position.items()}
 
 
 def idx_to_hero_name(idx, feature_names, id_to_name):

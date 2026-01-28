@@ -78,3 +78,11 @@ OPENDOTA_MATCHES_URL = "https://api.opendota.com/api/publicMatches"
 
 # API key (loaded from .env file or environment variable)
 OPENDOTA_API_KEY = os.environ.get("OPENDOTA_API_KEY", None)
+
+# Role labels anchored by pivotal heroes (used for inspecting position probs)
+PIVOTAL_HERO_ROLES = {
+    "anti-mage": "carry",
+    "storm spirit": "mid",
+    "axe": "offlane",
+    "warlock": "hardsup",
+}

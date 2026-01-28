@@ -17,7 +17,7 @@ try:
         FM_LINEAR_WEIGHTS_PATH,
     )
     from wandao.models.factorization_machine import load_fm_data, ROLE_COLUMNS
-    from wandao.utils.utils import fetch_hero_names
+    from wandao.utils.utils import fetch_hero_names, resolve_position_role_mapping
 except ImportError:
     # Allow running as a script from repo root without installing the package
     PKG_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -32,7 +32,7 @@ except ImportError:
         FM_LINEAR_WEIGHTS_PATH,
     )
     from wandao.models.factorization_machine import load_fm_data, ROLE_COLUMNS
-    from wandao.utils.utils import fetch_hero_names
+    from wandao.utils.utils import fetch_hero_names, resolve_position_role_mapping
 
 
 def _load_hero_names():
@@ -54,6 +54,10 @@ def export_position_probs():
         "Hero_Name",
         df["Hero_ID"].map(lambda hid: id_to_name.get(int(hid), str(hid))),
     )
+    position_to_role = resolve_position_role_mapping(df, id_to_name=id_to_name)
+    role_order = ["carry", "mid", "offlane", "softsup", "hardsup"]
+    df.rename(columns=position_to_role, inplace=True)
+    df = df[["Hero_ID", "Hero_Name"] + role_order]
     out_path = POSITION_PROBS_NAMED_PATH
     df.to_csv(out_path, index=False)
     print(f"Saved position probabilities to {out_path}")
