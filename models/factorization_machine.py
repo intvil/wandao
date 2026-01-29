@@ -5,8 +5,10 @@ Features are built by multiplying each hero's lineup sign (-1/0/1) by its
 position probability vector (Position1..Position5), yielding NUM_HEROS * 5 features.
 """
 
+import itertools
+import multiprocessing as mp
 import os
-from typing import List, Sequence, Tuple, Optional
+from typing import List, Sequence, Tuple, Optional, Dict, Any, Union
 
 import numpy as np
 import pandas as pd
@@ -18,14 +20,21 @@ from wandao.config import (
     DATA_PATH,
     FM_MODEL_PATH,
     POSITION_PROBS_PATH,
+    POSITION_PROB_SPARSE_THRESHOLD,
     device,
     FM_LATENT_DIM,
     FM_BATCH_SIZE,
     FM_EPOCHS,
     FM_LR,
-    FM_WEIGHT_DECAY,
+    FM_LINEAR_WEIGHT_DECAY,
+    FM_FACTOR_WEIGHT_DECAY,
     FM_EARLY_STOP_PATIENCE,
     FM_EARLY_STOP_MIN_DELTA,
+    FM_GRID_LATENT_DIMS,
+    FM_GRID_LRS,
+    FM_GRID_LINEAR_WEIGHT_DECAYS,
+    FM_GRID_FACTOR_WEIGHT_DECAYS,
+    FM_GRID_NUM_WORKERS,
 )
 
 ROLE_COLUMNS = ["Position1", "Position2", "Position3", "Position4", "Position5"]
@@ -60,6 +69,18 @@ def load_position_probs(path: str = DEFAULT_POSITION_PROBS) -> pd.DataFrame:
         raise ValueError("Duplicate Hero_ID values in hero_position_probs.csv")
     df = df[["Hero_ID"] + ROLE_COLUMNS].copy()
     df["Hero_ID"] = df["Hero_ID"].astype(int)
+    threshold = float(POSITION_PROB_SPARSE_THRESHOLD)
+    if threshold > 0:
+        role_vals = df[ROLE_COLUMNS].to_numpy(dtype=np.float32)
+        mask = role_vals >= threshold
+        sparse_vals = np.where(mask, role_vals, 0.0)
+        row_sums = sparse_vals.sum(axis=1, keepdims=True)
+        zero_rows = row_sums.squeeze() == 0.0
+        if np.any(zero_rows):
+            sparse_vals[zero_rows] = role_vals[zero_rows]
+            row_sums = sparse_vals.sum(axis=1, keepdims=True)
+        sparse_vals = sparse_vals / row_sums
+        df[ROLE_COLUMNS] = sparse_vals
     return df.set_index("Hero_ID")
 
 
@@ -184,11 +205,13 @@ def train_fm(
     batch_size: int = FM_BATCH_SIZE,
     epochs: int = FM_EPOCHS,
     lr: float = FM_LR,
-    weight_decay: float = FM_WEIGHT_DECAY,
+    linear_weight_decay: float = FM_LINEAR_WEIGHT_DECAY,
+    factor_weight_decay: float = FM_FACTOR_WEIGHT_DECAY,
     early_stop_patience: int = FM_EARLY_STOP_PATIENCE,
     early_stop_min_delta: float = FM_EARLY_STOP_MIN_DELTA,
     model_path: Optional[str] = FM_MODEL_PATH,
-):
+    return_metrics: bool = False,
+) -> Union[nn.Module, Tuple[nn.Module, float, float]]:
     lineups, targets, role_probs, hero_ids = load_fm_data(
         fea_path=fea_path, position_probs_path=position_probs_path
     )
@@ -210,10 +233,18 @@ def train_fm(
 
     n_features = role_probs.shape[0] * role_probs.shape[1]
     model = FactorizationMachine(n_features, latent_dim=latent_dim).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    opt = torch.optim.Adam(
+        [
+            {"params": [model.bias], "weight_decay": 0.0},
+            {"params": [model.linear], "weight_decay": linear_weight_decay},
+            {"params": [model.factors], "weight_decay": factor_weight_decay},
+        ],
+        lr=lr,
+    )
     loss_fn = nn.BCEWithLogitsLoss()
 
     best_val = float("inf")
+    best_val_acc = 0.0
     best_state = None
     epochs_no_improve = 0
     best_epoch = 0
@@ -240,6 +271,7 @@ def train_fm(
         )
         if val_loss < (best_val - early_stop_min_delta):
             best_val = val_loss
+            best_val_acc = val_acc
             best_state = {
                 "state_dict": model.state_dict(),
                 "latent_dim": latent_dim,
@@ -266,4 +298,159 @@ def train_fm(
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
         torch.save(best_state, model_path)
         print(f"Saved FM model to {model_path}")
+    if return_metrics:
+        return model, best_val, best_val_acc
     return model
+
+
+def _fm_grid_worker(item: Tuple) -> Dict[str, Any]:
+    (
+        fea_path,
+        position_probs_path,
+        latent_dim,
+        lr,
+        linear_wd,
+        factor_wd,
+        batch_size,
+        epochs,
+        early_stop_patience,
+        early_stop_min_delta,
+        idx,
+        total,
+    ) = item
+    print(
+        "\n=== FM grid run "
+        f"{idx}/{total} "
+        f"(latent_dim={latent_dim}, lr={lr}, "
+        f"linear_wd={linear_wd}, factor_wd={factor_wd}) ===",
+        flush=True,
+    )
+    model, val_loss, val_acc = train_fm(
+        fea_path=fea_path,
+        position_probs_path=position_probs_path,
+        latent_dim=latent_dim,
+        batch_size=batch_size,
+        epochs=epochs,
+        lr=lr,
+        linear_weight_decay=linear_wd,
+        factor_weight_decay=factor_wd,
+        early_stop_patience=early_stop_patience,
+        early_stop_min_delta=early_stop_min_delta,
+        model_path=None,
+        return_metrics=True,
+    )
+    state_dict = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+    return {
+        "val_loss": val_loss,
+        "val_acc": val_acc,
+        "latent_dim": latent_dim,
+        "lr": lr,
+        "linear_weight_decay": linear_wd,
+        "factor_weight_decay": factor_wd,
+        "state_dict": state_dict,
+        "n_features": model.linear.shape[0],
+    }
+
+
+def train_fm_grid(
+    fea_path: str = DATA_PATH,
+    position_probs_path: str = DEFAULT_POSITION_PROBS,
+    latent_dims: Sequence[int] = FM_GRID_LATENT_DIMS,
+    lrs: Sequence[float] = FM_GRID_LRS,
+    linear_weight_decays: Sequence[float] = FM_GRID_LINEAR_WEIGHT_DECAYS,
+    factor_weight_decays: Sequence[float] = FM_GRID_FACTOR_WEIGHT_DECAYS,
+    batch_size: int = FM_BATCH_SIZE,
+    epochs: int = FM_EPOCHS,
+    early_stop_patience: int = FM_EARLY_STOP_PATIENCE,
+    early_stop_min_delta: float = FM_EARLY_STOP_MIN_DELTA,
+    num_workers: int = FM_GRID_NUM_WORKERS,
+    model_path: Optional[str] = FM_MODEL_PATH,
+) -> Tuple[nn.Module, Dict[str, Any], float]:
+    _, _, _, hero_ids = load_fm_data(
+        fea_path=fea_path, position_probs_path=position_probs_path
+    )
+    best_state = None
+    best_cfg = None
+    best_val = float("inf")
+    best_acc = 0.0
+
+    combos = list(
+        itertools.product(latent_dims, lrs, linear_weight_decays, factor_weight_decays)
+    )
+    total = len(combos)
+    if num_workers <= 0:
+        num_workers = mp.cpu_count()
+
+    args = []
+    for idx, (latent_dim, lr, linear_wd, factor_wd) in enumerate(combos, start=1):
+        args.append(
+            (
+                fea_path,
+                position_probs_path,
+                latent_dim,
+                lr,
+                linear_wd,
+                factor_wd,
+                batch_size,
+                epochs,
+                early_stop_patience,
+                early_stop_min_delta,
+                idx,
+                total,
+            )
+        )
+
+    def _update_best(result):
+        nonlocal best_val, best_acc, best_state, best_cfg
+        if result["val_loss"] < best_val:
+            best_val = result["val_loss"]
+            best_acc = result["val_acc"]
+            best_state = {
+                "state_dict": result["state_dict"],
+                "latent_dim": result["latent_dim"],
+                "n_features": result["n_features"],
+                "role_columns": ROLE_COLUMNS,
+                "hero_ids": hero_ids,
+                "model_path": model_path,
+            }
+            best_cfg = {
+                "latent_dim": result["latent_dim"],
+                "lr": result["lr"],
+                "linear_weight_decay": result["linear_weight_decay"],
+                "factor_weight_decay": result["factor_weight_decay"],
+                "val_loss": result["val_loss"],
+                "val_acc": result["val_acc"],
+            }
+            print(
+                f"New best val_loss={result['val_loss']:.6f} "
+                f"val_acc={result['val_acc']:.4f}"
+            )
+
+    if num_workers == 1:
+        for result in map(_fm_grid_worker, args):
+            _update_best(result)
+    else:
+        with mp.Pool(processes=num_workers) as pool:
+            for result in pool.imap_unordered(_fm_grid_worker, args):
+                _update_best(result)
+
+    if best_state is None:
+        raise RuntimeError("FM grid search failed to produce a valid model")
+    model = FactorizationMachine(
+        best_state["n_features"], latent_dim=best_state["latent_dim"]
+    ).to(device)
+    model.load_state_dict(best_state["state_dict"])
+    if model_path:
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        torch.save(best_state, model_path)
+        print(f"Saved best FM model to {model_path}")
+    print(
+        "Best FM config: "
+        f"latent_dim={best_cfg['latent_dim']}, "
+        f"lr={best_cfg['lr']}, "
+        f"linear_wd={best_cfg['linear_weight_decay']}, "
+        f"factor_wd={best_cfg['factor_weight_decay']}, "
+        f"val_loss={best_cfg['val_loss']:.6f}, "
+        f"val_acc={best_cfg['val_acc']:.4f}"
+    )
+    return model, best_cfg, best_val

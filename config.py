@@ -39,6 +39,9 @@ POSITION_PROBS_NAMED_PATH = os.path.join(
 )
 FM_LINEAR_WEIGHTS_PATH = os.path.join(DATA_CACHE_DIR, "fm_linear_weights_named.csv")
 
+# Position probability sparsification (applies to FM training + inference)
+POSITION_PROB_SPARSE_THRESHOLD = 0.2
+
 # Draft step count (derived from actual ban/pick sequence in policy.py)
 TOTAL_STEPS = 24
 
@@ -60,9 +63,15 @@ FM_LATENT_DIM = 8
 FM_BATCH_SIZE = 1024
 FM_EPOCHS = 10
 FM_LR = 1e-3
-FM_WEIGHT_DECAY = 1e-6
+FM_LINEAR_WEIGHT_DECAY = 1e-4
+FM_FACTOR_WEIGHT_DECAY = 1e-6
 FM_EARLY_STOP_PATIENCE = 3
 FM_EARLY_STOP_MIN_DELTA = 1e-4
+FM_GRID_LATENT_DIMS = [FM_LATENT_DIM, 16]
+FM_GRID_LRS = [FM_LR, 5e-4]
+FM_GRID_LINEAR_WEIGHT_DECAYS = [FM_LINEAR_WEIGHT_DECAY, 5e-4]
+FM_GRID_FACTOR_WEIGHT_DECAYS = [FM_FACTOR_WEIGHT_DECAY, 1e-5]
+FM_GRID_NUM_WORKERS = 0
 
 # Draft search defaults
 DRAFT_TOP_K = 5

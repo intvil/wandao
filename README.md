@@ -21,8 +21,8 @@ python3 -m wandao.cli.run_draft --fetch-data
 # Encode lineups and train EM position model
 python3 -m wandao.cli.run_draft --encode-lineups --train-em
 
-# Train factorization machine reward model
-python3 -m wandao.cli.run_draft --train-fm
+# Train factorization machine reward model (grid search)
+python3 -m wandao.cli.run_draft --train-fm-grid
 
 # Run a sample draft using expectimax + FM
 python3 -m wandao.cli.run_draft --sample-draft
@@ -38,7 +38,7 @@ Use `python3 -m wandao.utils.inspect_models` to export named EM position probabi
 --fetch-data              Fetch new match data from OpenDota API (batch count set in config.py)
 --encode-lineups         Encode cached matches into per-side lineups (saves to data_cache/pub_lineups.fea)
 --train-em               Train EM position model (saves to configured position probs path)
---train-fm               Train factorization machine on lineup+position features
+--train-fm-grid          Grid search FM hyperparameters and save best model
 --sample-draft           Run a sample draft using FM + expectimax
 --refresh-features       Force refresh hero feature_names.json from OpenDota API
 ```
@@ -47,7 +47,7 @@ Use `python3 -m wandao.utils.inspect_models` to export named EM position probabi
 
 ```bash
 # Full pipeline from scratch (expectimax draft needs FM)
-python3 -m wandao.cli.run_draft --fetch-data --encode-lineups --train-em --train-fm
+python3 -m wandao.cli.run_draft --fetch-data --encode-lineups --train-em --train-fm-grid
 ```
 
 ## Project Structure
@@ -94,3 +94,10 @@ Draft search can be sped up by toggling settings in `config.py`:
 - `DRAFT_MP_EVAL`: enable multiprocessing for candidate scoring.
 - `DRAFT_MP_WORKERS`: number of worker processes.
 - `DRAFT_EVAL_CACHE_SIZE`: LRU cache size for lineup evaluations.
+- `FM_LINEAR_WEIGHT_DECAY` / `FM_FACTOR_WEIGHT_DECAY`: regularization strengths
+  for FM linear vs factor terms.
+- `FM_GRID_*`: grid search values for FM tuning (latent dim, LR, weight decays),
+  plus `FM_GRID_NUM_WORKERS` for parallelism (0 uses CPU count).
+
+Position probabilities can be sparsified before FM training/inference (see
+`POSITION_PROB_SPARSE_THRESHOLD` in `config.py`, set to 0 to disable).

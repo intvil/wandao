@@ -5,6 +5,7 @@ Main entry point for training and running the draft agent.
 import argparse
 import itertools
 import math
+import pandas as pd
 from wandao.config import device, DATA_PATH, FETCH_BATCHES
 from wandao.utils.utils import (
     ensure_feature_names,
@@ -15,7 +16,7 @@ from wandao.utils.utils import (
 from wandao.models.reward_model import RewardModel
 from wandao.models.factorization_machine import (
     load_position_probs,
-    train_fm,
+    train_fm_grid,
     ROLE_COLUMNS,
 )
 from wandao.models.position_em import train_em
@@ -55,6 +56,32 @@ def _infer_team_positions(team_indices, feature_names, id_to_name, pos_df):
     ]
 
 
+def _format_grid_table(df: pd.DataFrame) -> str:
+    cols = list(df.columns)
+    col_vals = []
+    for col in cols:
+        vals = ["" if pd.isna(v) else str(v) for v in df[col].tolist()]
+        col_vals.append(vals)
+    widths = []
+    for col, vals in zip(cols, col_vals):
+        max_val = max((len(v) for v in vals), default=0)
+        widths.append(max(len(str(col)), max_val))
+
+    def _line():
+        return "+" + "+".join("-" * (w + 2) for w in widths) + "+"
+
+    lines = [_line()]
+    header = "| " + " | ".join(f"{col:<{w}}" for col, w in zip(cols, widths)) + " |"
+    lines.append(header)
+    lines.append(_line())
+    for row_idx in range(len(df)):
+        row = [col_vals[i][row_idx] for i in range(len(cols))]
+        line = "| " + " | ".join(f"{cell:<{w}}" for cell, w in zip(row, widths)) + " |"
+        lines.append(line)
+    lines.append(_line())
+    return "\n".join(lines)
+
+
 def main():
     """Main training and evaluation pipeline."""
     parser = argparse.ArgumentParser(
@@ -71,8 +98,8 @@ Examples:
   # Train position EM model (after encoding lineups)
   python3 -m wandao.cli.run_draft --train-em
   
-  # Train factorization machine (after EM position probs)
-  python3 -m wandao.cli.run_draft --train-fm
+    # Train factorization machine (after EM position probs)
+    python3 -m wandao.cli.run_draft --train-fm-grid
   
     # Run a sample draft using FM + expectimax
     python3 -m wandao.cli.run_draft --sample-draft
@@ -107,9 +134,9 @@ Examples:
         help="Train EM position model and save hero_position_probs.csv",
     )
     parser.add_argument(
-        "--train-fm",
+        "--train-fm-grid",
         action="store_true",
-        help="Train factorization machine on lineup+position features",
+        help="Run FM grid search and save best model",
     )
 
     # Sampling
@@ -129,7 +156,7 @@ Examples:
             args.sample_draft,
             args.encode_lineups,
             args.refresh_features,
-            args.train_fm,
+            args.train_fm_grid,
             args.train_em,
         ]
     ):
@@ -169,10 +196,9 @@ Examples:
         print("\n=== Training EM position model ===")
         train_em()
 
-    # Train factorization machine if requested
-    if args.train_fm:
-        print("\n=== Training factorization machine ===")
-        train_fm()
+    if args.train_fm_grid:
+        print("\n=== Training factorization machine (grid search) ===")
+        train_fm_grid()
 
     # Sample draft if requested
     if args.sample_draft:
@@ -210,26 +236,50 @@ Examples:
             reason = entry.get("choice_reason", "best_value")
             print(f"  Chosen {action_type}: {chosen_name} ({reason})")
 
-        # Map indices to hero names for readability
-        bans_names = [idx_to_hero_name(i, feature_names, id_to_name) for i in bans]
-        a_names = [idx_to_hero_name(i, feature_names, id_to_name) for i in a]
-        b_names = [idx_to_hero_name(i, feature_names, id_to_name) for i in b]
-
-        print("\n=== Sample greedy draft ===")
-        print("bans:", bans_names)
-        print("teamA picks:", a_names)
-        print("teamB picks:", b_names)
-        print("predicted P(A wins):", round(p, 3))
-
         pos_df = load_position_probs()
-        print(
-            "teamA positions:",
-            _infer_team_positions(a, feature_names, id_to_name, pos_df),
+        a_positions = _infer_team_positions(a, feature_names, id_to_name, pos_df)
+        b_positions = _infer_team_positions(b, feature_names, id_to_name, pos_df)
+        a_pick_labels = {idx: label for idx, label in zip(a, a_positions)}
+        b_pick_labels = {idx: label for idx, label in zip(b, b_positions)}
+        bans_names = {
+            idx: idx_to_hero_name(idx, feature_names, id_to_name) for idx in bans
+        }
+
+        print("\n=== Sample greedy draft (summary) ===")
+        print("predicted P(A wins):", round(p, 3))
+        rows = []
+        for entry in steps:
+            step_idx = entry["step"] + 1
+            side = entry["side"]
+            action_type = entry["action_type"]
+            chosen = entry["chosen"]
+            row = {
+                "Turn": step_idx,
+                "Team A Ban": "",
+                "Team A Pick": "",
+                "Team B Pick": "",
+                "Team B Ban": "",
+            }
+            if action_type == "ban":
+                if side == 0:
+                    row["Team A Ban"] = bans_names.get(chosen, str(chosen))
+                else:
+                    row["Team B Ban"] = bans_names.get(chosen, str(chosen))
+            else:
+                if side == 0:
+                    row["Team A Pick"] = a_pick_labels.get(
+                        chosen, idx_to_hero_name(chosen, feature_names, id_to_name)
+                    )
+                else:
+                    row["Team B Pick"] = b_pick_labels.get(
+                        chosen, idx_to_hero_name(chosen, feature_names, id_to_name)
+                    )
+            rows.append(row)
+        draft_df = pd.DataFrame(
+            rows,
+            columns=["Turn", "Team A Ban", "Team A Pick", "Team B Pick", "Team B Ban"],
         )
-        print(
-            "teamB positions:",
-            _infer_team_positions(b, feature_names, id_to_name, pos_df),
-        )
+        print(_format_grid_table(draft_df))
 
 
 if __name__ == "__main__":
