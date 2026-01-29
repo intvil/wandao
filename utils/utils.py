@@ -154,9 +154,7 @@ def resolve_position_role_mapping(pos_df, id_to_name=None, pivotal_hero_roles=No
             raise ValueError(f"Pivotal hero missing in position probs: {hero_name}")
         position = hero_rows.iloc[0].idxmax()
         if position in used_positions:
-            raise ValueError(
-                f"Position {position} assigned to multiple pivotal heroes"
-            )
+            raise ValueError(f"Position {position} assigned to multiple pivotal heroes")
         role_to_position[role] = position
         used_positions.add(position)
     remaining_positions = [c for c in ROLE_COLUMNS if c not in used_positions]

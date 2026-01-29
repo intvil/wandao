@@ -22,7 +22,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Paths
 MODEL_CACHE_DIR = os.path.join(BASE_DIR, "model_cache")
 FEATURES_PATH = os.path.join(MODEL_CACHE_DIR, "feature_names.json")
-POLICY_PATH = os.path.join(MODEL_CACHE_DIR, "draft_policy.pt")
 FM_MODEL_PATH = os.path.join(MODEL_CACHE_DIR, "fm_model.pt")
 
 # Data cache directory and files
@@ -65,9 +64,12 @@ FM_WEIGHT_DECAY = 1e-6
 FM_EARLY_STOP_PATIENCE = 3
 FM_EARLY_STOP_MIN_DELTA = 1e-4
 
-# Policy training defaults
-POLICY_ITERS = 2000
-POLICY_BATCH_EPISODES = 32
+# Draft search defaults
+DRAFT_TOP_K = 5
+DRAFT_BATCH_EVAL = True
+DRAFT_MP_EVAL = False
+DRAFT_MP_WORKERS = 4
+DRAFT_EVAL_CACHE_SIZE = 20000
 
 # Device configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

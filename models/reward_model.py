@@ -100,3 +100,24 @@ class RewardModel:
             raise ValueError("Use the pipeline data fetch step before training FM.")
         train_fm(fea_path=fea_path or DATA_PATH)
         self._load_fm()
+
+    def predict_proba_batch(self, vecs: np.ndarray) -> np.ndarray:
+        if self.model is None:
+            raise ValueError("Reward model not loaded or trained.")
+        if self.role_probs is None or self.fm_feature_indices is None:
+            self._prepare_fm_mappings()
+        vecs = np.asarray(vecs, dtype=np.float32)
+        if vecs.ndim != 2:
+            raise ValueError("vecs must be a 2D array (n_samples, n_features)")
+        if vecs.shape[1] == len(self.feature_names):
+            vecs = vecs[:, self.fm_feature_indices]
+        elif vecs.shape[1] != len(self.fm_hero_ids):
+            raise ValueError(
+                "FM expects lineup vectors sized to feature_names or FM hero ids."
+            )
+        x = build_fm_features(vecs, self.role_probs)
+        x = torch.tensor(x, dtype=torch.float32)
+        with torch.no_grad():
+            logits = self.model(x).cpu().numpy()
+        proba = 1 / (1 + np.exp(-logits))
+        return np.clip(proba, 0.0, 1.0).astype(np.float32)

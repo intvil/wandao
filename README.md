@@ -1,6 +1,6 @@
 # Dota 2 Draft Agent
 
-RL-based draft agent using a factorization machine reward model.
+Draft agent using a factorization machine reward model and expectimax search.
 
 ## Quick Start
 
@@ -24,11 +24,8 @@ python3 -m wandao.cli.run_draft --encode-lineups --train-em
 # Train factorization machine reward model
 python3 -m wandao.cli.run_draft --train-fm
 
-# Train the policy
-python3 -m wandao.cli.run_draft --train-policy
-
-# Run a sample draft with saved models
-python3 -m wandao.cli.run_draft --sample-draft --load-policy
+# Run a sample draft using expectimax + FM
+python3 -m wandao.cli.run_draft --sample-draft
 
 ```
 
@@ -42,17 +39,15 @@ Use `python3 -m wandao.utils.inspect_models` to export named EM position probabi
 --encode-lineups         Encode cached matches into per-side lineups (saves to data_cache/pub_lineups.fea)
 --train-em               Train EM position model (saves to configured position probs path)
 --train-fm               Train factorization machine on lineup+position features
---train-policy           Train draft policy via RL (iterations set in config.py)
---load-policy            Load saved policy before training/sampling
---sample-draft           Run a sample greedy draft with saved models
+--sample-draft           Run a sample draft using FM + expectimax
 --refresh-features       Force refresh hero feature_names.json from OpenDota API
 ```
 
 ## Examples
 
 ```bash
-# Full pipeline from scratch
-python3 -m wandao.cli.run_draft --fetch-data --encode-lineups --train-em --train-fm --train-policy
+# Full pipeline from scratch (expectimax draft needs FM)
+python3 -m wandao.cli.run_draft --fetch-data --encode-lineups --train-em --train-fm
 ```
 
 ## Project Structure
@@ -66,27 +61,36 @@ wandao/
 │   ├── data_fetch.py
 │   └── encoding.py
 ├── models/              # Model definitions
-│   ├── policy.py
 │   ├── reward_model.py
 │   └── position_em.py
-├── training/            # RL training utilities
-│   └── training.py
+├── search/              # Draft search utilities
+│   └── expectimax.py
 ├── utils/               # Helpers (feature names, hero names)
 │   ├── utils.py
 │   └── inspect_models.py
 ├── pipelines/           # Orchestration
 │   └── main.py
-├── model_cache/         # Saved model artifacts (feature names, reward/policy)
+├── model_cache/         # Saved model artifacts (feature names, reward model)
 ├── data_cache/          # Cached match and encoded data
 └── README.md
 ```
 
-Saved model artifacts (feature names, reward model, policy) are stored under `model_cache/` per paths defined in `config.py`.
+Saved model artifacts (feature names, reward model) are stored under `model_cache/` per paths defined in `config.py`.
 
 ## Features
 
 - Smart data caching with overlap detection
 - Factorization machine win prediction model
-- Policy gradient RL for draft strategy
+- Expectimax draft search (evaluates after one opponent pick)
+- Random selection from top-k candidates for draft actions
 - OpenDota API integration
 - Configurable training parameters
+
+## Performance tuning
+
+Draft search can be sped up by toggling settings in `config.py`:
+
+- `DRAFT_BATCH_EVAL`: batch FM scoring for candidate filtering.
+- `DRAFT_MP_EVAL`: enable multiprocessing for candidate scoring.
+- `DRAFT_MP_WORKERS`: number of worker processes.
+- `DRAFT_EVAL_CACHE_SIZE`: LRU cache size for lineup evaluations.

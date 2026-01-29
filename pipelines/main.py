@@ -5,14 +5,7 @@ Main entry point for training and running the draft agent.
 import argparse
 import itertools
 import math
-from wandao.config import (
-    device,
-    TOTAL_STEPS,
-    DATA_PATH,
-    FETCH_BATCHES,
-    POLICY_ITERS,
-    POLICY_BATCH_EPISODES,
-)
+from wandao.config import device, DATA_PATH, FETCH_BATCHES
 from wandao.utils.utils import (
     ensure_feature_names,
     fetch_hero_names,
@@ -26,13 +19,7 @@ from wandao.models.factorization_machine import (
     ROLE_COLUMNS,
 )
 from wandao.models.position_em import train_em
-from wandao.models.policy import DraftPolicy
-from wandao.training.training import (
-    train_self_play,
-    greedy_draft,
-    save_policy,
-    load_policy,
-)
+from wandao.search.expectimax import greedy_draft
 from wandao.data.data_fetch import construct_dataset, get_lineup_data
 from wandao.data.encoding import encode_df
 
@@ -87,11 +74,8 @@ Examples:
   # Train factorization machine (after EM position probs)
   python3 -m wandao.cli.run_draft --train-fm
   
-  # Train policy (requires FM model)
-  python3 -m wandao.cli.run_draft --train-policy
-  
-  # Run a sample draft using saved models
-  python3 -m wandao.cli.run_draft --sample-draft --load-policy
+    # Run a sample draft using FM + expectimax
+    python3 -m wandao.cli.run_draft --sample-draft
         """,
     )
 
@@ -128,21 +112,11 @@ Examples:
         help="Train factorization machine on lineup+position features",
     )
 
-    # Policy training
-    parser.add_argument(
-        "--train-policy", action="store_true", help="Train the draft policy via RL"
-    )
-    parser.add_argument(
-        "--load-policy",
-        action="store_true",
-        help="Load saved draft policy instead of training from scratch",
-    )
-
     # Sampling
     parser.add_argument(
         "--sample-draft",
         action="store_true",
-        help="Run a sample greedy draft with the current policy",
+        help="Run a sample draft using FM + expectimax",
     )
 
     args = parser.parse_args()
@@ -152,7 +126,6 @@ Examples:
     if not any(
         [
             args.fetch_data,
-            args.train_policy,
             args.sample_draft,
             args.encode_lineups,
             args.refresh_features,
@@ -170,7 +143,6 @@ Examples:
     print(f"Loaded {N_CHAMPS} features (heroes) from feature_names.json")
 
     reward_model = None
-    policy = None
     raw_df = None
 
     # Fetch data if requested
@@ -202,34 +174,6 @@ Examples:
         print("\n=== Training factorization machine ===")
         train_fm()
 
-    # Policy training if requested
-    if args.train_policy:
-        if reward_model is None:
-            reward_model = RewardModel(feature_names)
-            if not reward_model.load():
-                raise RuntimeError(
-                    "No trained reward model found. Run with --train-fm first."
-                )
-        if args.load_policy:
-            try:
-                policy = load_policy(N_CHAMPS)
-            except Exception as e:
-                print(f"Failed to load saved policy, training from scratch: {e}")
-        if policy is None:
-            policy = DraftPolicy(N_CHAMPS, TOTAL_STEPS).to(device)
-        print(
-            f"\n=== Training draft policy via self-play ({POLICY_ITERS} iterations, "
-            f"batch_episodes={POLICY_BATCH_EPISODES}) ==="
-        )
-        train_self_play(
-            policy,
-            reward_model,
-            N_CHAMPS,
-            iters=POLICY_ITERS,
-            batch_episodes=POLICY_BATCH_EPISODES,
-        )
-        save_policy(policy, N_CHAMPS)
-
     # Sample draft if requested
     if args.sample_draft:
         if reward_model is None:
@@ -238,13 +182,6 @@ Examples:
                 raise RuntimeError(
                     "No trained reward model found. Train or load it before sampling."
                 )
-        if policy is None:
-            try:
-                policy = load_policy(N_CHAMPS)
-            except Exception as e:
-                raise RuntimeError(
-                    "No trained policy available; train or load one before sampling."
-                ) from e
 
         # Fetch hero names for display
         id_to_name = fetch_hero_names()
@@ -255,7 +192,23 @@ Examples:
                 "Warning: failed to fetch hero names from OpenDota; falling back to ids"
             )
 
-        bans, a, b, p = greedy_draft(policy, reward_model, N_CHAMPS)
+        bans, a, b, p, steps = greedy_draft(reward_model, N_CHAMPS)
+
+        print("\n=== Draft steps ===")
+        for entry in steps:
+            step_idx = entry["step"] + 1
+            side = "A" if entry["side"] == 0 else "B"
+            action_type = entry["action_type"]
+            ranked = entry["ranked_candidates"]
+            chosen = entry["chosen"]
+            print(f"Step {step_idx:02d}: Team {side} {action_type}")
+            print("  Top candidates (FM score / expected value):")
+            for score, expected, idx in ranked:
+                name = idx_to_hero_name(idx, feature_names, id_to_name)
+                print(f"    - {name}: {score:.3f} / {expected:.3f}")
+            chosen_name = idx_to_hero_name(chosen, feature_names, id_to_name)
+            reason = entry.get("choice_reason", "best_value")
+            print(f"  Chosen {action_type}: {chosen_name} ({reason})")
 
         # Map indices to hero names for readability
         bans_names = [idx_to_hero_name(i, feature_names, id_to_name) for i in bans]
