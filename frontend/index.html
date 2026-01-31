@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dota 2 Draft vs Model</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #0f172a; color: #e2e8f0; }
+    header { padding: 16px 24px; background: #111827; display: flex; align-items: center; justify-content: space-between; }
+    main { padding: 24px; display: grid; gap: 16px; grid-template-columns: 1fr 2fr; }
+    .panel { background: #111827; border-radius: 8px; padding: 16px; box-shadow: 0 0 0 1px #1f2937; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .status { font-size: 14px; color: #94a3b8; }
+    .turn { font-weight: bold; color: #f8fafc; }
+    .history { max-height: 400px; overflow-y: auto; }
+    .history-item { padding: 6px 0; border-bottom: 1px solid #1f2937; }
+    .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+    .radiant { background: #14532d; color: #dcfce7; }
+    .dire { background: #7f1d1d; color: #fee2e2; }
+    .ban { background: #1f2937; color: #cbd5f5; }
+    .pick { background: #0f172a; color: #f8fafc; }
+    .win-rate { font-size: 28px; font-weight: bold; }
+    .input-group { display: flex; gap: 8px; margin-top: 12px; }
+    input, select, button { padding: 8px 10px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; }
+    button { cursor: pointer; background: #2563eb; border-color: #1d4ed8; }
+    button:disabled { background: #475569; border-color: #475569; cursor: not-allowed; }
+    .draft-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .team-card { background: #0b1220; padding: 12px; border-radius: 8px; border: 1px solid #1f2937; }
+    .team-card h3 { margin: 0 0 8px 0; }
+    ul { margin: 0; padding-left: 18px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h2>Dota 2 Draft vs Model</h2>
+      <div class="status" id="status">Choose a side to start.</div>
+    </div>
+    <div>
+      <span class="status">Win Rate:</span>
+      <div class="win-rate" id="winRate">-</div>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h3>Controls</h3>
+      <div class="row">
+        <label for="sideSelect">Play as:</label>
+        <select id="sideSelect">
+          <option value="0">Radiant</option>
+          <option value="1">Dire</option>
+        </select>
+        <button id="startBtn">Start Draft</button>
+      </div>
+
+      <div class="input-group">
+        <input list="heroList" id="heroInput" placeholder="Search hero..." />
+        <datalist id="heroList"></datalist>
+        <button id="submitBtn" disabled>Submit</button>
+      </div>
+
+      <div class="panel" style="margin-top: 16px;">
+        <h4>Draft Status</h4>
+        <div class="status">Turn: <span class="turn" id="turnLabel">-</span></div>
+        <div class="status">Phase: <span class="turn" id="phaseLabel">-</span></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h3>History</h3>
+      <div class="history" id="history"></div>
+      <div class="draft-grid" style="margin-top: 16px;">
+        <div class="team-card">
+          <h3>Radiant Picks</h3>
+          <ul id="radiantPicks"></ul>
+        </div>
+        <div class="team-card">
+          <h3>Dire Picks</h3>
+          <ul id="direPicks"></ul>
+        </div>
+        <div class="team-card">
+          <h3>Bans</h3>
+          <ul id="bansList"></ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const winRateEl = document.getElementById('winRate');
+    const heroInput = document.getElementById('heroInput');
+    const heroList = document.getElementById('heroList');
+    const submitBtn = document.getElementById('submitBtn');
+    const startBtn = document.getElementById('startBtn');
+    const sideSelect = document.getElementById('sideSelect');
+    const historyEl = document.getElementById('history');
+    const turnLabel = document.getElementById('turnLabel');
+    const phaseLabel = document.getElementById('phaseLabel');
+    const radiantPicks = document.getElementById('radiantPicks');
+    const direPicks = document.getElementById('direPicks');
+    const bansList = document.getElementById('bansList');
+
+    let heroNames = [];
+    let sequence = [];
+    let state = null;
+
+    async function fetchHeroNames() {
+      const res = await fetch('/api/hero_names');
+      heroNames = await res.json();
+      heroList.innerHTML = heroNames.map(h => `<option value="${h}"></option>`).join('');
+    }
+
+    async function fetchSequence() {
+      const res = await fetch('/api/sequence');
+      sequence = await res.json();
+    }
+
+    function renderState() {
+      if (!state) return;
+      winRateEl.textContent = `${(state.win_rate * 100).toFixed(1)}%`;
+      const side = state.turn_side === null ? 'Complete' : (state.turn_side === 0 ? 'Radiant' : 'Dire');
+      turnLabel.textContent = side;
+      phaseLabel.textContent = state.turn_type || '-';
+      submitBtn.disabled = state.turn_side !== state.user_side || state.turn_side === null;
+      statusEl.textContent = state.turn_side === state.user_side ? 'Your turn.' : 'Model thinking...';
+      updateHeroOptions(state);
+
+      radiantPicks.innerHTML = state.team_radiant.map(idx => `<li>${heroNames[idx]}</li>`).join('');
+      direPicks.innerHTML = state.team_dire.map(idx => `<li>${heroNames[idx]}</li>`).join('');
+      bansList.innerHTML = state.bans.map(idx => `<li>${heroNames[idx]}</li>`).join('');
+
+      historyEl.innerHTML = buildHistory(state);
+      historyEl.scrollTop = historyEl.scrollHeight;
+    }
+
+    function buildHistory(state) {
+      if (!sequence.length) return '';
+      const historyItems = [];
+      let banIdx = 0;
+      let rIdx = 0;
+      let dIdx = 0;
+      for (const step of sequence) {
+        if (step.type === 'ban') {
+          const heroIdx = state.bans[banIdx++];
+          if (heroIdx === undefined) break;
+          historyItems.push(historyRow(step.step, step.side, 'ban', heroNames[heroIdx]));
+        } else {
+          if (step.side === 0) {
+            const heroIdx = state.team_radiant[rIdx++];
+            if (heroIdx === undefined) break;
+            historyItems.push(historyRow(step.step, step.side, 'pick', heroNames[heroIdx]));
+          } else {
+            const heroIdx = state.team_dire[dIdx++];
+            if (heroIdx === undefined) break;
+            historyItems.push(historyRow(step.step, step.side, 'pick', heroNames[heroIdx]));
+          }
+        }
+      }
+      return historyItems.join('');
+    }
+
+    function updateHeroOptions(state) {
+      const used = new Set([...state.team_radiant, ...state.team_dire, ...state.bans]);
+      heroList.innerHTML = heroNames
+        .filter((_, idx) => !used.has(idx))
+        .map(h => `<option value="${h}"></option>`)
+        .join('');
+    }
+
+    function historyRow(step, side, type, hero) {
+      const sideClass = side === 0 ? 'radiant' : 'dire';
+      const typeClass = type === 'ban' ? 'ban' : 'pick';
+      return `<div class="history-item"><span class="badge ${sideClass}">${side === 0 ? 'Radiant' : 'Dire'}</span> <span class="badge ${typeClass}">${type}</span> ${step + 1}. ${hero}</div>`;
+    }
+
+    startBtn.addEventListener('click', async () => {
+      const userSide = parseInt(sideSelect.value, 10);
+      const res = await fetch('/api/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_side: userSide })
+      });
+      state = await res.json();
+      renderState();
+    });
+
+    submitBtn.addEventListener('click', async () => {
+      const heroName = heroInput.value.trim();
+      if (!heroName) return;
+      const res = await fetch('/api/pick', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hero_name: heroName })
+      });
+      state = await res.json();
+      heroInput.value = '';
+      renderState();
+    });
+
+    Promise.all([fetchHeroNames(), fetchSequence()]);
+  </script>
+</body>
+</html>

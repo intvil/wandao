@@ -32,6 +32,17 @@ python3 -m wandao.cli.run_draft --sample-draft
 Feature names are stored in `model_cache/feature_names.json` and will be fetched from OpenDota on first run (use `--refresh-features` to force refresh).
 Use `python3 -m wandao.utils.inspect_models` to export named EM position probabilities, FM linear weights, and FM factor weights into the paths configured in `config.py`.
 
+## Draft UI
+
+Run the draft UI server:
+
+```bash
+pip install flask
+python3 frontend/server.py
+```
+
+Open http://127.0.0.1:5000
+
 ## Command Line Options
 
 ```
