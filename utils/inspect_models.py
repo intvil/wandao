@@ -15,6 +15,7 @@ try:
         POSITION_PROBS_PATH,
         POSITION_PROBS_NAMED_PATH,
         FM_LINEAR_WEIGHTS_PATH,
+        FM_FACTORS_PATH,
     )
     from wandao.models.factorization_machine import load_fm_data, ROLE_COLUMNS
     from wandao.utils.utils import fetch_hero_names, resolve_position_role_mapping
@@ -30,6 +31,7 @@ except ImportError:
         POSITION_PROBS_PATH,
         POSITION_PROBS_NAMED_PATH,
         FM_LINEAR_WEIGHTS_PATH,
+        FM_FACTORS_PATH,
     )
     from wandao.models.factorization_machine import load_fm_data, ROLE_COLUMNS
     from wandao.utils.utils import fetch_hero_names, resolve_position_role_mapping
@@ -81,11 +83,34 @@ def export_fm_linear_weights():
     return df
 
 
+def export_fm_factors():
+    if not os.path.exists(FM_MODEL_PATH):
+        raise FileNotFoundError(f"FM model not found at {FM_MODEL_PATH}")
+    ckpt = torch.load(FM_MODEL_PATH, map_location="cpu")
+    _, _, _, hero_ids = load_fm_data()
+    id_to_name = _load_hero_names()
+
+    pos_df = pd.read_csv(POSITION_PROBS_PATH)
+    position_to_role = resolve_position_role_mapping(pos_df, id_to_name=id_to_name)
+    role_names = [position_to_role[col] for col in ROLE_COLUMNS]
+    hero_labels = [id_to_name.get(hid, str(hid)) for hid in hero_ids]
+    row_labels = [f"{hero}_{role}" for hero in hero_labels for role in role_names]
+
+    factors = ckpt["state_dict"]["factors"].detach().cpu().numpy()
+    df = pd.DataFrame(factors, index=row_labels)
+    out_path = FM_FACTORS_PATH
+    df.to_csv(out_path, index_label="Hero_Role")
+    print(f"Saved FM factor weights to {out_path}")
+    return df
+
+
 def main():
     print("=== Exporting EM position probabilities ===")
     export_position_probs()
     print("=== Exporting FM linear weights ===")
     export_fm_linear_weights()
+    print("=== Exporting FM factor weights ===")
+    export_fm_factors()
 
 
 if __name__ == "__main__":

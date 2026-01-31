@@ -30,7 +30,7 @@ python3 -m wandao.cli.run_draft --sample-draft
 ```
 
 Feature names are stored in `model_cache/feature_names.json` and will be fetched from OpenDota on first run (use `--refresh-features` to force refresh).
-Use `python3 -m wandao.utils.inspect_models` to export named EM position probabilities and FM linear weights into the paths configured in `config.py`.
+Use `python3 -m wandao.utils.inspect_models` to export named EM position probabilities, FM linear weights, and FM factor weights into the paths configured in `config.py`.
 
 ## Command Line Options
 
@@ -94,9 +94,8 @@ Draft search can be sped up by toggling settings in `config.py`:
 - `DRAFT_MP_EVAL`: enable multiprocessing for candidate scoring.
 - `DRAFT_MP_WORKERS`: number of worker processes.
 - `DRAFT_EVAL_CACHE_SIZE`: LRU cache size for lineup evaluations.
-- `FM_LINEAR_WEIGHT_DECAY` / `FM_FACTOR_WEIGHT_DECAY`: regularization strengths
-  for FM linear vs factor terms.
-- `FM_GRID_*`: grid search values for FM tuning (latent dim, LR, weight decays),
+- `FM_L2_LAMBDA0`: base strength for frequency-weighted L2 regularization.
+- `FM_GRID_*`: grid search values for FM tuning (latent dim, LR, L2 lambda0),
   plus `FM_GRID_NUM_WORKERS` for parallelism (0 uses CPU count).
 
 Position probabilities can be sparsified before FM training/inference (see

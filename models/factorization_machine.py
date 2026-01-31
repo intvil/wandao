@@ -26,14 +26,12 @@ from wandao.config import (
     FM_BATCH_SIZE,
     FM_EPOCHS,
     FM_LR,
-    FM_LINEAR_WEIGHT_DECAY,
-    FM_FACTOR_WEIGHT_DECAY,
+    FM_L2_LAMBDA0,
     FM_EARLY_STOP_PATIENCE,
     FM_EARLY_STOP_MIN_DELTA,
     FM_GRID_LATENT_DIMS,
     FM_GRID_LRS,
-    FM_GRID_LINEAR_WEIGHT_DECAYS,
-    FM_GRID_FACTOR_WEIGHT_DECAYS,
+    FM_GRID_L2_LAMBDAS,
     FM_GRID_NUM_WORKERS,
 )
 
@@ -205,8 +203,7 @@ def train_fm(
     batch_size: int = FM_BATCH_SIZE,
     epochs: int = FM_EPOCHS,
     lr: float = FM_LR,
-    linear_weight_decay: float = FM_LINEAR_WEIGHT_DECAY,
-    factor_weight_decay: float = FM_FACTOR_WEIGHT_DECAY,
+    l2_lambda0: float = FM_L2_LAMBDA0,
     early_stop_patience: int = FM_EARLY_STOP_PATIENCE,
     early_stop_min_delta: float = FM_EARLY_STOP_MIN_DELTA,
     model_path: Optional[str] = FM_MODEL_PATH,
@@ -232,12 +229,22 @@ def train_fm(
     )
 
     n_features = role_probs.shape[0] * role_probs.shape[1]
+    hero_counts = np.sum(np.abs(lineups), axis=0)
+    n_max = float(np.max(hero_counts)) if hero_counts.size else 0.0
+    if l2_lambda0 < 0:
+        raise ValueError("l2_lambda0 must be non-negative")
+    if n_max <= 0.0:
+        lambda_h = np.zeros_like(hero_counts, dtype=np.float32)
+    else:
+        lambda_h = l2_lambda0 * np.sqrt(n_max / (hero_counts + 1.0))
+    lambda_feat = np.repeat(lambda_h, role_probs.shape[1]).astype(np.float32)
+    lambda_feat_t = torch.tensor(lambda_feat, dtype=torch.float32, device=device)
     model = FactorizationMachine(n_features, latent_dim=latent_dim).to(device)
     opt = torch.optim.Adam(
         [
             {"params": [model.bias], "weight_decay": 0.0},
-            {"params": [model.linear], "weight_decay": linear_weight_decay},
-            {"params": [model.factors], "weight_decay": factor_weight_decay},
+            {"params": [model.linear], "weight_decay": 0.0},
+            {"params": [model.factors], "weight_decay": 0.0},
         ],
         lr=lr,
     )
@@ -258,7 +265,10 @@ def train_fm(
             targets = targets.to(device)
             opt.zero_grad()
             logits = model(feats)
-            loss = loss_fn(logits, targets)
+            base_loss = loss_fn(logits, targets)
+            linear_l2 = (lambda_feat_t * (model.linear ** 2)).sum()
+            factor_l2 = (lambda_feat_t[:, None] * (model.factors ** 2)).sum()
+            loss = base_loss + linear_l2 + factor_l2
             loss.backward()
             opt.step()
             total_loss += loss.item() * feats.size(0)
@@ -309,8 +319,7 @@ def _fm_grid_worker(item: Tuple) -> Dict[str, Any]:
         position_probs_path,
         latent_dim,
         lr,
-        linear_wd,
-        factor_wd,
+        l2_lambda0,
         batch_size,
         epochs,
         early_stop_patience,
@@ -321,8 +330,7 @@ def _fm_grid_worker(item: Tuple) -> Dict[str, Any]:
     print(
         "\n=== FM grid run "
         f"{idx}/{total} "
-        f"(latent_dim={latent_dim}, lr={lr}, "
-        f"linear_wd={linear_wd}, factor_wd={factor_wd}) ===",
+        f"(latent_dim={latent_dim}, lr={lr}, l2_lambda0={l2_lambda0}) ===",
         flush=True,
     )
     model, val_loss, val_acc = train_fm(
@@ -332,8 +340,7 @@ def _fm_grid_worker(item: Tuple) -> Dict[str, Any]:
         batch_size=batch_size,
         epochs=epochs,
         lr=lr,
-        linear_weight_decay=linear_wd,
-        factor_weight_decay=factor_wd,
+        l2_lambda0=l2_lambda0,
         early_stop_patience=early_stop_patience,
         early_stop_min_delta=early_stop_min_delta,
         model_path=None,
@@ -345,8 +352,7 @@ def _fm_grid_worker(item: Tuple) -> Dict[str, Any]:
         "val_acc": val_acc,
         "latent_dim": latent_dim,
         "lr": lr,
-        "linear_weight_decay": linear_wd,
-        "factor_weight_decay": factor_wd,
+        "l2_lambda0": l2_lambda0,
         "state_dict": state_dict,
         "n_features": model.linear.shape[0],
     }
@@ -357,8 +363,7 @@ def train_fm_grid(
     position_probs_path: str = DEFAULT_POSITION_PROBS,
     latent_dims: Sequence[int] = FM_GRID_LATENT_DIMS,
     lrs: Sequence[float] = FM_GRID_LRS,
-    linear_weight_decays: Sequence[float] = FM_GRID_LINEAR_WEIGHT_DECAYS,
-    factor_weight_decays: Sequence[float] = FM_GRID_FACTOR_WEIGHT_DECAYS,
+    l2_lambdas: Sequence[float] = FM_GRID_L2_LAMBDAS,
     batch_size: int = FM_BATCH_SIZE,
     epochs: int = FM_EPOCHS,
     early_stop_patience: int = FM_EARLY_STOP_PATIENCE,
@@ -375,22 +380,21 @@ def train_fm_grid(
     best_acc = 0.0
 
     combos = list(
-        itertools.product(latent_dims, lrs, linear_weight_decays, factor_weight_decays)
+        itertools.product(latent_dims, lrs, l2_lambdas)
     )
     total = len(combos)
     if num_workers <= 0:
         num_workers = mp.cpu_count()
 
     args = []
-    for idx, (latent_dim, lr, linear_wd, factor_wd) in enumerate(combos, start=1):
+    for idx, (latent_dim, lr, l2_lambda0) in enumerate(combos, start=1):
         args.append(
             (
                 fea_path,
                 position_probs_path,
                 latent_dim,
                 lr,
-                linear_wd,
-                factor_wd,
+                l2_lambda0,
                 batch_size,
                 epochs,
                 early_stop_patience,
@@ -416,8 +420,7 @@ def train_fm_grid(
             best_cfg = {
                 "latent_dim": result["latent_dim"],
                 "lr": result["lr"],
-                "linear_weight_decay": result["linear_weight_decay"],
-                "factor_weight_decay": result["factor_weight_decay"],
+                "l2_lambda0": result["l2_lambda0"],
                 "val_loss": result["val_loss"],
                 "val_acc": result["val_acc"],
             }
@@ -448,8 +451,7 @@ def train_fm_grid(
         "Best FM config: "
         f"latent_dim={best_cfg['latent_dim']}, "
         f"lr={best_cfg['lr']}, "
-        f"linear_wd={best_cfg['linear_weight_decay']}, "
-        f"factor_wd={best_cfg['factor_weight_decay']}, "
+        f"l2_lambda0={best_cfg['l2_lambda0']}, "
         f"val_loss={best_cfg['val_loss']:.6f}, "
         f"val_acc={best_cfg['val_acc']:.4f}"
     )
