@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
+from wandao.models.factorization_machine import load_position_probs, ROLE_COLUMNS
 from wandao.config import (
     TOTAL_STEPS,
     DRAFT_TOP_K,
@@ -30,13 +31,14 @@ class _EvalContext:
     mp_workers: int
     cache_size: int
     cache: OrderedDict
+    role_probs: np.ndarray
 
 
 _MP_CONTEXT = None
 _RNG = np.random.default_rng()
 
 
-def _mp_init(reward_model, n_champs, use_batch, cache_size):
+def _mp_init(reward_model, n_champs, use_batch, cache_size, role_probs):
     global _MP_CONTEXT
     _MP_CONTEXT = _EvalContext(
         reward_model=reward_model,
@@ -46,6 +48,7 @@ def _mp_init(reward_model, n_champs, use_batch, cache_size):
         mp_workers=0,
         cache_size=cache_size,
         cache=OrderedDict(),
+        role_probs=role_probs,
     )
 
 
@@ -136,8 +139,78 @@ def _next_pick_side(t):
     return side_to_move(TOTAL_STEPS - 1)
 
 
+def _build_role_probs_from_model(reward_model) -> np.ndarray:
+    feature_names = getattr(reward_model, "feature_names", None)
+    if not feature_names:
+        raise ValueError("Reward model missing feature_names for role probabilities.")
+    hero_ids = []
+    for name in feature_names:
+        try:
+            hero_ids.append(int(name))
+        except Exception as exc:
+            raise ValueError(f"Invalid hero id in feature_names: {name}") from exc
+    pos_df = load_position_probs()
+    role_probs = pos_df.reindex(hero_ids)[ROLE_COLUMNS].to_numpy(dtype=np.float32)
+    role_probs = np.nan_to_num(role_probs, nan=0.0)
+    return role_probs
+
+
+def _remaining_positions_mask(team, role_probs: np.ndarray):
+    if role_probs is None or len(role_probs) == 0 or not team:
+        return None
+    team_probs = role_probs[team]
+    if team_probs.size == 0:
+        return None
+    summed = team_probs.sum(axis=0)
+    mask = summed == 0.0
+    if not mask.any():
+        return None
+    return mask
+
+
+def _filter_by_remaining_positions(
+    available_indices, team, role_probs: np.ndarray, require_min_picks=True
+):
+    if require_min_picks and len(team) < 1:
+        return available_indices
+    mask = _remaining_positions_mask(team, role_probs)
+    if mask is None:
+        return available_indices
+    remaining_positions = np.nonzero(mask)[0]
+    if remaining_positions.size == 0:
+        return available_indices
+    filtered = []
+    for idx in available_indices:
+        probs = role_probs[idx]
+        if probs.size == 0 or np.all(probs == 0.0):
+            filtered.append(idx)  # allow heroes missing position probs
+            continue
+        if probs[remaining_positions].max() > 0.0:
+            filtered.append(idx)
+    if filtered:
+        return filtered
+    return available_indices
+
+
+def _filter_candidates(available_indices, teamA, teamB, ctx: _EvalContext, t):
+    if ctx.role_probs is None:
+        return available_indices
+    side = side_to_move(t)
+    if is_pick_step(t):
+        team = teamA if side == 0 else teamB
+        return _filter_by_remaining_positions(available_indices, team, ctx.role_probs)
+    # ban step: restrict to opponent feasible pool
+    opponent_team = teamB if side == 0 else teamA
+    return _filter_by_remaining_positions(
+        available_indices, opponent_team, ctx.role_probs
+    )
+
+
 def _top_k_candidates(available, teamA, teamB, ctx: _EvalContext, t, k):
     available_indices = [i for i, ok in enumerate(available) if ok]
+    available_indices = _filter_candidates(available_indices, teamA, teamB, ctx, t)
+    if not available_indices:
+        available_indices = [i for i, ok in enumerate(available) if ok]
     if len(available_indices) <= k:
         return available_indices
     pick_side = _next_pick_side(t)
@@ -155,6 +228,7 @@ def _top_k_candidates(available, teamA, teamB, ctx: _EvalContext, t, k):
                 ctx.n_champs,
                 ctx.use_batch,
                 ctx.cache_size,
+                ctx.role_probs,
             ),
         ) as pool:
             results = pool.map(
@@ -172,6 +246,9 @@ def _top_k_candidates(available, teamA, teamB, ctx: _EvalContext, t, k):
 
 def _rank_candidates_with_scores(available, teamA, teamB, ctx: _EvalContext, t, k):
     available_indices = [i for i, ok in enumerate(available) if ok]
+    available_indices = _filter_candidates(available_indices, teamA, teamB, ctx, t)
+    if not available_indices:
+        available_indices = [i for i, ok in enumerate(available) if ok]
     pick_side = _next_pick_side(t)
     if ctx.use_mp and len(available_indices) > ctx.mp_workers:
         chunk = max(1, len(available_indices) // ctx.mp_workers)
@@ -187,6 +264,7 @@ def _rank_candidates_with_scores(available, teamA, teamB, ctx: _EvalContext, t, 
                 ctx.n_champs,
                 ctx.use_batch,
                 ctx.cache_size,
+                ctx.role_probs,
             ),
         ) as pool:
             results = pool.map(
@@ -311,6 +389,7 @@ def greedy_draft(
         mp_workers=max(1, DRAFT_MP_WORKERS),
         cache_size=DRAFT_EVAL_CACHE_SIZE,
         cache=OrderedDict(),
+        role_probs=_build_role_probs_from_model(reward_model),
     )
     available = [True] * n_champs
     bans = []

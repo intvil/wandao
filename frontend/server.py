@@ -26,7 +26,11 @@ try:
     )
     from wandao.models.policy import is_ban_step, is_pick_step, side_to_move
     from wandao.models.reward_model import RewardModel
-    from wandao.search.expectimax import _EvalContext, _choose_random_action_with_trace
+    from wandao.search.expectimax import (
+        _EvalContext,
+        _choose_random_action_with_trace,
+        _build_role_probs_from_model,
+    )
     from wandao.utils.utils import load_feature_names
 except ImportError:
     # Allow running as a script from repo root without installing the package
@@ -114,6 +118,7 @@ def _ensure_loaded():
             mp_workers=max(1, DRAFT_MP_WORKERS),
             cache_size=DRAFT_EVAL_CACHE_SIZE,
             cache=OrderedDict(),
+            role_probs=_build_role_probs_from_model(_reward_model),
         )
 
 
