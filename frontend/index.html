@@ -28,6 +28,14 @@
     .team-card { background: #0b1220; padding: 12px; border-radius: 8px; border: 1px solid #1f2937; }
     .team-card h3 { margin: 0 0 8px 0; }
     ul { margin: 0; padding-left: 18px; }
+    .tabs { display: flex; gap: 8px; margin-top: 8px; }
+    .tab-btn { padding: 8px 12px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; border-radius: 6px; cursor: pointer; }
+    .tab-btn.active { background: #2563eb; border-color: #1d4ed8; }
+    .hidden { display: none; }
+    .eval-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .selector { display: flex; flex-direction: column; gap: 8px; }
+    .roles { margin-top: 12px; }
+    .roles ul { padding-left: 18px; }
   </style>
 </head>
 <body>
@@ -44,7 +52,15 @@
 
   <main>
     <section class="panel">
-      <h3>Controls</h3>
+      <h3>Mode</h3>
+      <div class="tabs">
+        <button class="tab-btn active" id="draftTab">Draft</button>
+        <button class="tab-btn" id="evalTab">Lineup Evaluation</button>
+      </div>
+    </section>
+
+    <section class="panel" id="draftPanel">
+      <h3>Draft Controls</h3>
       <div class="row">
         <label for="sideSelect">Play as:</label>
         <select id="sideSelect">
@@ -67,7 +83,7 @@
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="draftHistory">
       <h3>History</h3>
       <div class="history" id="history"></div>
       <div class="draft-grid" style="margin-top: 16px;">
@@ -82,6 +98,39 @@
         <div class="team-card">
           <h3>Bans</h3>
           <ul id="bansList"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="evalPanel">
+      <h3>Lineup Evaluation</h3>
+      <div class="eval-grid">
+        <div class="team-card selector">
+          <h3>Radiant Lineup</h3>
+          <div id="radiantSelectors"></div>
+        </div>
+        <div class="team-card selector">
+          <h3>Dire Lineup</h3>
+          <div id="direSelectors"></div>
+        </div>
+      </div>
+      <div class="row" style="margin-top: 12px;">
+        <button id="evalSubmit">Evaluate</button>
+        <button id="evalReset" style="background:#475569;border-color:#475569;">Clear</button>
+        <div class="status" id="evalStatus"></div>
+      </div>
+      <div class="roles" id="evalResults" style="display:none;">
+        <h4>Win Probability</h4>
+        <div id="evalWinRate"></div>
+        <div class="eval-grid" style="margin-top:12px;">
+          <div>
+            <h4>Radiant Roles</h4>
+            <ul id="evalRadiantRoles"></ul>
+          </div>
+          <div>
+            <h4>Dire Roles</h4>
+            <ul id="evalDireRoles"></ul>
+          </div>
         </div>
       </div>
     </section>
@@ -101,15 +150,32 @@
     const radiantPicks = document.getElementById('radiantPicks');
     const direPicks = document.getElementById('direPicks');
     const bansList = document.getElementById('bansList');
+    const draftPanel = document.getElementById('draftPanel');
+    const draftHistory = document.getElementById('draftHistory');
+    const evalPanel = document.getElementById('evalPanel');
+    const draftTab = document.getElementById('draftTab');
+    const evalTab = document.getElementById('evalTab');
+    const radiantSelectors = document.getElementById('radiantSelectors');
+    const direSelectors = document.getElementById('direSelectors');
+    const evalSubmit = document.getElementById('evalSubmit');
+    const evalReset = document.getElementById('evalReset');
+    const evalStatus = document.getElementById('evalStatus');
+    const evalResults = document.getElementById('evalResults');
+    const evalWinRate = document.getElementById('evalWinRate');
+    const evalRadiantRoles = document.getElementById('evalRadiantRoles');
+    const evalDireRoles = document.getElementById('evalDireRoles');
 
     let heroNames = [];
     let sequence = [];
     let state = null;
+    let radiantEval = [null, null, null, null, null];
+    let direEval = [null, null, null, null, null];
 
     async function fetchHeroNames() {
       const res = await fetch('/api/hero_names');
       heroNames = await res.json();
       heroList.innerHTML = heroNames.map(h => `<option value="${h}"></option>`).join('');
+      buildEvalSelectors();
     }
 
     async function fetchSequence() {
@@ -169,6 +235,109 @@
         .join('');
     }
 
+    function buildEvalSelectors() {
+      const radiantHtml = radiantEval.map((_, i) => selectorRow('radiant', i)).join('');
+      const direHtml = direEval.map((_, i) => selectorRow('dire', i)).join('');
+      radiantSelectors.innerHTML = radiantHtml;
+      direSelectors.innerHTML = direHtml;
+      attachSelectorHandlers();
+      renderEvalOptions();
+    }
+
+    function selectorRow(side, idx) {
+      return `
+        <div class="row">
+          <input list="${side}List${idx}" data-side="${side}" data-idx="${idx}" placeholder="Select hero..." />
+          <datalist id="${side}List${idx}"></datalist>
+          <select data-role="${side}" data-idx="${idx}">
+            <option value="any" selected>any</option>
+            <option value="carry">carry</option>
+            <option value="mid">mid</option>
+            <option value="offlane">offlane</option>
+            <option value="softsup">softsup</option>
+            <option value="hardsup">hardsup</option>
+          </select>
+        </div>
+      `;
+    }
+
+    function attachSelectorHandlers() {
+      const inputs = document.querySelectorAll('#evalPanel input[list]');
+      inputs.forEach(input => {
+        input.addEventListener('change', (e) => {
+          const side = e.target.dataset.side;
+          const idx = parseInt(e.target.dataset.idx, 10);
+          const name = e.target.value.trim();
+          if (!name) {
+            setEvalSelection(side, idx, null);
+            return renderEvalOptions();
+          }
+          const heroIdx = heroNames.findIndex(h => h.toLowerCase() === name.toLowerCase());
+          if (heroIdx === -1) {
+            setEvalSelection(side, idx, null);
+            e.target.value = '';
+            return renderEvalOptions();
+          }
+          setEvalSelection(side, idx, heroIdx);
+          renderEvalOptions();
+        });
+      });
+      const selects = document.querySelectorAll('#evalPanel select[data-role]');
+      selects.forEach(sel => {
+        sel.addEventListener('change', () => {
+          // roles read on submit; no immediate action needed
+        });
+      });
+    }
+
+    function setEvalSelection(side, idx, heroIdx) {
+      if (side === 'radiant') {
+        radiantEval[idx] = heroIdx;
+      } else {
+        direEval[idx] = heroIdx;
+      }
+    }
+
+    function renderEvalOptions() {
+      const used = new Set([...radiantEval, ...direEval].filter(v => v !== null));
+      const inputs = document.querySelectorAll('#evalPanel input[list]');
+      inputs.forEach(input => {
+        const side = input.dataset.side;
+        const idx = parseInt(input.dataset.idx, 10);
+        const current = side === 'radiant' ? radiantEval[idx] : direEval[idx];
+        const options = heroNames
+          .map((h, i) => ({ h, i }))
+          .filter(({ i }) => i === current || !used.has(i))
+          .map(({ h }) => `<option value="${h}"></option>`)
+          .join('');
+        document.getElementById(`${side}List${idx}`).innerHTML = options;
+      });
+    }
+
+    function getEvalPayload() {
+      if (radiantEval.some(v => v === null) || direEval.some(v => v === null)) {
+        return null;
+      }
+      const radiantRoles = [];
+      const direRoles = [];
+      const selects = document.querySelectorAll('#evalPanel select[data-role]');
+      selects.forEach(sel => {
+        const side = sel.dataset.role;
+        const idx = parseInt(sel.dataset.idx, 10);
+        if (side === 'radiant') {
+          radiantRoles[idx] = sel.value || 'any';
+        } else {
+          direRoles[idx] = sel.value || 'any';
+        }
+      });
+      return {
+        radiant: radiantEval.map(idx => heroNames[idx]),
+        dire: direEval.map(idx => heroNames[idx]),
+        radiant_roles: radiantRoles,
+        dire_roles: direRoles,
+      };
+    }
+
     function historyRow(step, side, type, hero) {
       const sideClass = side === 0 ? 'radiant' : 'dire';
       const typeClass = type === 'ban' ? 'ban' : 'pick';
@@ -197,6 +366,59 @@
       state = await res.json();
       heroInput.value = '';
       renderState();
+    });
+
+    evalSubmit.addEventListener('click', async () => {
+      const payload = getEvalPayload();
+      evalStatus.textContent = '';
+      evalResults.style.display = 'none';
+      if (!payload) {
+        evalStatus.textContent = 'Please select 5 heroes per side.';
+        return;
+      }
+      try {
+        const res = await fetch('/api/eval_lineup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!res.ok) {
+          evalStatus.textContent = body.error || 'Evaluation failed.';
+          return;
+        }
+        evalWinRate.textContent = `Radiant: ${(body.win_prob_radiant * 100).toFixed(1)}% | Dire: ${(body.win_prob_dire * 100).toFixed(1)}%`;
+        evalRadiantRoles.innerHTML = body.radiant_roles.map(r => `<li>${r}</li>`).join('');
+        evalDireRoles.innerHTML = body.dire_roles.map(r => `<li>${r}</li>`).join('');
+        evalResults.style.display = 'block';
+      } catch (e) {
+        evalStatus.textContent = 'Evaluation failed.';
+      }
+    });
+
+    evalReset.addEventListener('click', () => {
+      radiantEval = [null, null, null, null, null];
+      direEval = [null, null, null, null, null];
+      evalStatus.textContent = '';
+      evalResults.style.display = 'none';
+      buildEvalSelectors();
+    });
+
+    draftTab.addEventListener('click', () => {
+      draftTab.classList.add('active');
+      evalTab.classList.remove('active');
+      draftPanel.classList.remove('hidden');
+      draftHistory.classList.remove('hidden');
+      evalPanel.classList.add('hidden');
+    });
+
+    evalTab.addEventListener('click', () => {
+      evalTab.classList.add('active');
+      draftTab.classList.remove('active');
+      draftPanel.classList.add('hidden');
+      draftHistory.classList.add('hidden');
+      evalPanel.classList.remove('hidden');
+      renderEvalOptions();
     });
 
     Promise.all([fetchHeroNames(), fetchSequence()]);

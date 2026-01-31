@@ -9,6 +9,8 @@ import sys
 from collections import OrderedDict
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional
+import itertools
+import math
 
 from flask import Flask, jsonify, request, send_from_directory
 import numpy as np
@@ -31,7 +33,8 @@ try:
         _choose_random_action_with_trace,
         _build_role_probs_from_model,
     )
-    from wandao.utils.utils import load_feature_names
+    from wandao.utils.utils import load_feature_names, resolve_position_role_mapping
+    from wandao.models.factorization_machine import load_position_probs, ROLE_COLUMNS
 except ImportError:
     # Allow running as a script from repo root without installing the package
     PKG_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -51,8 +54,13 @@ except ImportError:
     )
     from wandao.models.policy import is_ban_step, is_pick_step, side_to_move
     from wandao.models.reward_model import RewardModel
-    from wandao.search.expectimax import _EvalContext, _choose_random_action_with_trace
-    from wandao.utils.utils import load_feature_names
+    from wandao.search.expectimax import (
+        _EvalContext,
+        _choose_random_action_with_trace,
+        _build_role_probs_from_model,
+    )
+    from wandao.utils.utils import load_feature_names, resolve_position_role_mapping
+    from wandao.models.factorization_machine import load_position_probs, ROLE_COLUMNS
 
 
 app = Flask(__name__)
@@ -73,6 +81,7 @@ _hero_names: List[str] = []
 _name_to_idx: Dict[str, int] = {}
 _reward_model: Optional[RewardModel] = None
 _draft_ctx: Optional[_EvalContext] = None
+_feature_names: List[str] = []
 
 
 def _load_hero_names() -> List[str]:
@@ -87,6 +96,8 @@ def _load_hero_names() -> List[str]:
         raise ValueError("Hero names cache is invalid")
     # feature_names are hero IDs (strings) in model order
     feature_names = load_feature_names()
+    global _feature_names
+    _feature_names = feature_names
     id_to_name = {int(k): v for k, v in raw.items() if v}
     return [id_to_name.get(int(hid), str(hid)) for hid in feature_names]
 
@@ -120,6 +131,71 @@ def _ensure_loaded():
             cache=OrderedDict(),
             role_probs=_build_role_probs_from_model(_reward_model),
         )
+
+
+def _hero_ids_from_indices(indices: List[int]) -> List[int]:
+    if not _feature_names:
+        load_feature_names()
+    return [int(_feature_names[idx]) for idx in indices]
+
+
+def _infer_team_positions(
+    team_indices: List[int], role_overrides: Optional[List[str]] = None
+) -> List[str]:
+    pos_df = load_position_probs()
+    hero_ids = _hero_ids_from_indices(team_indices)
+    missing = [hid for hid in hero_ids if hid not in pos_df.index]
+    if missing:
+        preview = ", ".join(str(h) for h in missing[:10])
+        raise ValueError(
+            "Position probabilities missing hero ids: "
+            f"{len(missing)} (e.g., {preview})"
+        )
+    position_to_role = resolve_position_role_mapping(pos_df)
+    role_to_position = {v: k for k, v in position_to_role.items()}
+    probs = pos_df.loc[hero_ids, ROLE_COLUMNS].to_numpy(dtype=float)
+
+    fixed_positions = [None] * len(team_indices)
+    if role_overrides:
+        if len(role_overrides) != len(team_indices):
+            raise ValueError("role_overrides must match team size")
+        for i, role in enumerate(role_overrides):
+            if not role or role.lower() == "any":
+                continue
+            key = role.lower()
+            if key not in role_to_position:
+                raise ValueError(
+                    "Invalid role override (allowed: carry, mid, offlane, softsup, hardsup, any)"
+                )
+            fixed_positions[i] = ROLE_COLUMNS.index(role_to_position[key])
+        # detect duplicate fixed positions
+        seen = [p for p in fixed_positions if p is not None]
+        if len(seen) != len(set(seen)):
+            raise ValueError("Duplicate fixed roles not allowed")
+
+    best_perm = None
+    best_log = -float("inf")
+    for perm in itertools.permutations(range(len(ROLE_COLUMNS))):
+        ok = True
+        if fixed_positions:
+            for idx, fixed in enumerate(fixed_positions):
+                if fixed is not None and perm[idx] != fixed:
+                    ok = False
+                    break
+        if not ok:
+            continue
+        logp = 0.0
+        for row_idx, pos in enumerate(perm):
+            logp += math.log(probs[row_idx, pos] + 1e-12)
+        if logp > best_log:
+            best_log = logp
+            best_perm = perm
+    if best_perm is None:
+        raise ValueError("Unable to assign roles with provided overrides.")
+    return [
+        f"{_hero_names[idx]} ({position_to_role[ROLE_COLUMNS[pos_idx]]})"
+        for idx, pos_idx in zip(team_indices, best_perm)
+    ]
 
 
 def _new_state(user_side: int) -> DraftState:
@@ -231,6 +307,51 @@ def start():
         idx = _model_choose(_state)
         _apply_action(_state, idx)
     return jsonify(_serialize_state(_state))
+
+
+@app.route("/api/eval_lineup", methods=["POST"])
+def eval_lineup():
+    _ensure_loaded()
+    data = request.get_json(force=True)
+    radiant_names = data.get("radiant", [])
+    dire_names = data.get("dire", [])
+    radiant_roles = data.get("radiant_roles", [])
+    dire_roles = data.get("dire_roles", [])
+    try:
+        radiant_indices = [_name_to_idx[name.strip().lower()] for name in radiant_names]
+        dire_indices = [_name_to_idx[name.strip().lower()] for name in dire_names]
+    except KeyError as exc:
+        return jsonify({"error": f"Unknown hero name: {exc}"}), 400
+
+    if len(radiant_indices) != 5 or len(dire_indices) != 5:
+        return (
+            jsonify({"error": "Radiant and Dire must each have exactly 5 heroes"}),
+            400,
+        )
+
+    combined = radiant_indices + dire_indices
+    if len(set(combined)) != len(combined):
+        return jsonify({"error": "Heroes must be unique across both teams"}), 400
+
+    p_radiant = float(
+        _reward_model.predict_proba(_build_vec(radiant_indices, dire_indices))
+    )
+    try:
+        radiant_roles_out = _infer_team_positions(
+            radiant_indices, radiant_roles or None
+        )
+        dire_roles_out = _infer_team_positions(dire_indices, dire_roles or None)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(
+        {
+            "win_prob_radiant": p_radiant,
+            "win_prob_dire": 1.0 - p_radiant,
+            "radiant_roles": radiant_roles_out,
+            "dire_roles": dire_roles_out,
+        }
+    )
 
 
 @app.route("/api/pick", methods=["POST"])
