@@ -266,8 +266,8 @@ def train_fm(
             opt.zero_grad()
             logits = model(feats)
             base_loss = loss_fn(logits, targets)
-            linear_l2 = (lambda_feat_t * (model.linear ** 2)).sum()
-            factor_l2 = (lambda_feat_t[:, None] * (model.factors ** 2)).sum()
+            linear_l2 = (lambda_feat_t * (model.linear**2)).sum()
+            factor_l2 = (lambda_feat_t[:, None] * (model.factors**2)).sum()
             loss = base_loss + linear_l2 + factor_l2
             loss.backward()
             opt.step()
@@ -379,9 +379,7 @@ def train_fm_grid(
     best_val = float("inf")
     best_acc = 0.0
 
-    combos = list(
-        itertools.product(latent_dims, lrs, l2_lambdas)
-    )
+    combos = list(itertools.product(latent_dims, lrs, l2_lambdas))
     total = len(combos)
     if num_workers <= 0:
         num_workers = mp.cpu_count()

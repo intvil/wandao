@@ -92,9 +92,6 @@ class RewardModel:
         self,
         fea_path: Optional[str] = None,
         fetch_data: bool = False,
-        n_batches: int = 1000,
-        api_key: Optional[str] = None,
-        **_: object,
     ):
         if fetch_data:
             raise ValueError("Use the pipeline data fetch step before training FM.")
